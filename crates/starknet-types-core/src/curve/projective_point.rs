@@ -15,8 +15,23 @@ use lambdaworks_math::unsigned_integer::traits::IsUnsignedInteger;
 pub struct ProjectivePoint(pub(crate) ShortWeierstrassProjectivePoint<StarkCurve>);
 
 impl ProjectivePoint {
-    pub fn new(x: Felt, y: Felt, z: Felt) -> ProjectivePoint {
-        Self(ShortWeierstrassProjectivePoint::new([x.0, y.0, z.0]))
+    pub fn new(x: Felt, y: Felt, z: Felt) -> Result<ProjectivePoint, CurveError> {
+        Ok(Self(ShortWeierstrassProjectivePoint::new([x.0, y.0, z.0])?))
+    }
+
+    /// Creates a new short Weierstrass projective point, assuming the coordinates are valid.
+    ///
+    /// The coordinates are valid if the equation `y^2 * z = x^3 + a * x * z^2 + b * z^3`
+    /// holds, Where `a` and `b` are the short Weierstrass coefficients of the Stark
+    /// curve. Furthermore, the coordinates in the form `[0, _, 0]` all satisfy the
+    /// equation, and should be always transformed to the infinity value `[0, 1, 0]`.
+    ///
+    /// SAFETY: Failing to guarantee this assumptions could lead to a runtime panic
+    /// while operating with the value.
+    pub const fn new_unchecked(x: Felt, y: Felt, z: Felt) -> ProjectivePoint {
+        Self(ShortWeierstrassProjectivePoint::new_unchecked([
+            x.0, y.0, z.0,
+        ]))
     }
 
     /// The point at infinity.
@@ -49,7 +64,7 @@ impl ProjectivePoint {
     /// This method should be used with caution, as it does not validate whether the provided coordinates
     /// correspond to a valid point on the curve.
     pub fn from_affine_unchecked(x: Felt, y: Felt) -> Self {
-        Self(ShortWeierstrassProjectivePoint::new([
+        Self(ShortWeierstrassProjectivePoint::new_unchecked([
             x.0,
             y.0,
             Felt::ONE.0,
@@ -201,7 +216,7 @@ mod test {
 
     #[test]
     fn try_from_affine() {
-        let projective_point = ProjectivePoint::new(
+        let projective_point = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "874739451078007766457464989774322083649278607533249481151382481072868806602",
             )
@@ -265,7 +280,7 @@ mod test {
         assert!(identity.is_identity());
         assert_eq!(
             identity,
-            ProjectivePoint::new(Felt::from(0), Felt::from(1), Felt::from(0))
+            ProjectivePoint::new_unchecked(Felt::from(0), Felt::from(1), Felt::from(0))
         );
 
         assert_eq!(
@@ -273,7 +288,7 @@ mod test {
             Err(CurveError::EllipticCurveError(InvalidPoint))
         );
 
-        let a = ProjectivePoint::new(
+        let a = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "874739451078007766457464989774322083649278607533249481151382481072868806602",
             )
@@ -290,7 +305,7 @@ mod test {
     #[test]
     // Results checked against starknet-rs https://github.com/xJonathanLEI/starknet-rs/
     fn add_operations() {
-        let projective_point_1 = ProjectivePoint::new(
+        let projective_point_1 = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "874739451078007766457464989774322083649278607533249481151382481072868806602",
             )
@@ -325,7 +340,7 @@ mod test {
     #[test]
     // Results checked against starknet-rs https://github.com/xJonathanLEI/starknet-rs/
     fn add_operations_with_affine() {
-        let projective_point = ProjectivePoint::new(
+        let projective_point = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "874739451078007766457464989774322083649278607533249481151382481072868806602",
             )
@@ -358,7 +373,7 @@ mod test {
     #[test]
     // Results checked against starknet-rs https://github.com/xJonathanLEI/starknet-rs/
     fn add_operations_with_affine_no_pointer() {
-        let projective_point = ProjectivePoint::new(
+        let projective_point = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "874739451078007766457464989774322083649278607533249481151382481072868806602",
             )
@@ -391,7 +406,7 @@ mod test {
     #[test]
     // Results checked against starknet-rs https://github.com/xJonathanLEI/starknet-rs/
     fn add_assign_operations() {
-        let mut projective_point_1 = ProjectivePoint::new(
+        let mut projective_point_1 = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "874739451078007766457464989774322083649278607533249481151382481072868806602",
             )
@@ -427,7 +442,7 @@ mod test {
     #[test]
     // Results checked against starknet-rs https://github.com/xJonathanLEI/starknet-rs/
     fn add_assign_operations_with_affine() {
-        let mut projective_point = ProjectivePoint::new(
+        let mut projective_point = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "874739451078007766457464989774322083649278607533249481151382481072868806602",
             )
@@ -463,7 +478,7 @@ mod test {
     #[test]
     // Results checked against starknet-rs https://github.com/xJonathanLEI/starknet-rs/
     fn add_assign_operations_with_affine_no_pointer() {
-        let mut projective_point = ProjectivePoint::new(
+        let mut projective_point = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "874739451078007766457464989774322083649278607533249481151382481072868806602",
             )
@@ -507,7 +522,7 @@ mod test {
             identity
         );
 
-        let projective_point_1 = ProjectivePoint::new(
+        let projective_point_1 = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "685118385380464480289795596422487144864558069280897344382334516257395969277",
             )
@@ -539,7 +554,7 @@ mod test {
 
     #[test]
     fn mul_by_scalar_operations_with_felt() {
-        let a = ProjectivePoint::new(
+        let a = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "685118385380464480289795596422487144864558069280897344382334516257395969277",
             )
@@ -564,7 +579,7 @@ mod test {
     #[test]
     // Results checked against starknet-rs https://github.com/xJonathanLEI/starknet-rs/
     fn double_operations() {
-        let projective_point = ProjectivePoint::new(
+        let projective_point = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "874739451078007766457464989774322083649278607533249481151382481072868806602",
             )
@@ -594,7 +609,7 @@ mod test {
 
     #[test]
     fn neg_operations() {
-        let a = ProjectivePoint::new(
+        let a = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "685118385380464480289795596422487144864558069280897344382334516257395969277",
             )
@@ -606,7 +621,7 @@ mod test {
             Felt::from(1),
         );
 
-        let b = ProjectivePoint::new(
+        let b = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "685118385380464480289795596422487144864558069280897344382334516257395969277",
             )
@@ -623,7 +638,7 @@ mod test {
 
     #[test]
     fn sub_operations_pointers() {
-        let mut a = ProjectivePoint::new(
+        let mut a = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "685118385380464480289795596422487144864558069280897344382334516257395969277",
             )
@@ -645,7 +660,7 @@ mod test {
 
     #[test]
     fn sub_operations() {
-        let mut a = ProjectivePoint::new(
+        let mut a = ProjectivePoint::new_unchecked(
             Felt::from_dec_str(
                 "685118385380464480289795596422487144864558069280897344382334516257395969277",
             )

@@ -1,23 +1,26 @@
 #[cfg(feature = "alloc")]
+pub extern crate alloc;
+#[cfg(feature = "alloc")]
 mod alloc_impls;
+#[cfg(feature = "apollo-serialization")]
+mod apollo_serialization;
 #[cfg(feature = "arbitrary")]
 mod arbitrary;
 #[cfg(test)]
 mod felt_arbitrary;
+mod macro_impl;
 mod non_zero;
 #[cfg(feature = "num-traits")]
 mod num_traits_impl;
-#[cfg(feature = "papyrus-serialization")]
-mod papyrus_serialization;
 #[cfg(feature = "parity-scale-codec")]
 mod parity_scale_codec;
 #[cfg(feature = "prime-bigint")]
 mod prime_bigint;
 mod primitive_conversions;
+#[cfg(feature = "secret-felt")]
+pub mod secret_felt;
 #[cfg(feature = "serde")]
 mod serde;
-#[cfg(feature = "zeroize")]
-mod zeroize;
 
 use lambdaworks_math::errors::CreationError;
 pub use non_zero::{FeltIsZeroError, NonZeroFelt};
@@ -31,10 +34,7 @@ use core::str::FromStr;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
-use size_of::SizeOf;
-
-#[cfg(feature = "alloc")]
-pub extern crate alloc;
+pub use primitive_conversions::PrimitiveFromFeltError;
 
 use lambdaworks_math::{
     field::{
@@ -49,10 +49,6 @@ use lambdaworks_math::{
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Felt(pub(crate) FieldElement<Stark252PrimeField>);
 
-impl SizeOf for Felt {
-    fn size_of_children(&self, _context: &mut size_of::Context) {}
-}
-
 #[derive(Debug)]
 pub struct FromStrError(CreationError);
 
@@ -66,6 +62,7 @@ impl core::fmt::Display for FromStrError {
             CreationError::InvalidHexString => write!(f, "invalid hex string"),
             CreationError::InvalidDecString => write!(f, "invalid dec string"),
             CreationError::HexStringIsTooBig => write!(f, "hex string too big"),
+            CreationError::RepresentativeOutOfRange => write!(f, "representative out of range"),
             CreationError::EmptyString => write!(f, "empty string"),
         }
     }
@@ -105,7 +102,11 @@ impl Felt {
         ))
     }
 
-    pub const fn from_hex_unchecked(val: &str) -> Self {
+    /// Create a new [Felt] from a hex static string.
+    ///
+    /// This will panic if used on incorrect values, making it unfit for parsing dynamic values.
+    /// It should only be used with static strings, ideally in tests or a `const` context.
+    pub const fn from_hex_unwrap(val: &'static str) -> Self {
         Self(FieldElement::<Stark252PrimeField>::from_hex_unchecked(val))
     }
 
@@ -239,7 +240,7 @@ impl Felt {
 
     /// Finite field division.
     pub fn field_div(&self, rhs: &NonZeroFelt) -> Self {
-        Self(self.0 / rhs.0)
+        Self((self.0 / rhs.0).expect("dividing by a non zero felt will never fail"))
     }
 
     /// Truncated quotient between `self` and `rhs`.
@@ -286,7 +287,7 @@ impl Felt {
         Self(self.0.pow(exponent.0.representative()))
     }
 
-    // Implemention taken from Jonathan Lei's starknet-rs
+    // Implementation taken from Jonathan Lei's starknet-rs
     // https://github.com/xJonathanLEI/starknet-rs/blob/a3a0050f80e90bd40303256a85783f4b5b18258c/starknet-crypto/src/fe_utils.rs#L20
     /// Modular multiplication between `self` and `rhs` in modulo `p`.
     pub fn mul_mod(&self, rhs: &Self, p: &NonZeroFelt) -> Self {
@@ -304,7 +305,7 @@ impl Felt {
         Felt::from_bytes_be(&result)
     }
 
-    // Implemention taken from Jonathan Lei's starknet-rs
+    // Implementation taken from Jonathan Lei's starknet-rs
     // https://github.com/xJonathanLEI/starknet-rs/blob/a3a0050f80e90bd40303256a85783f4b5b18258c/starknet-crypto/src/fe_utils.rs#L46
     /// Multiplicative inverse of `self` in modulo `p`.
     pub fn mod_inverse(&self, p: &NonZeroFelt) -> Option<Self> {
@@ -441,6 +442,29 @@ impl From<BigUint> for Felt {
     }
 }
 
+impl From<Felt> for BigUint {
+    fn from(value: Felt) -> Self {
+        value.to_biguint()
+    }
+}
+
+impl From<&Felt> for BigUint {
+    fn from(value: &Felt) -> Self {
+        value.to_biguint()
+    }
+}
+
+impl From<Felt> for BigInt {
+    fn from(value: Felt) -> Self {
+        value.to_bigint()
+    }
+}
+
+impl From<&Felt> for BigInt {
+    fn from(value: &Felt) -> Self {
+        value.to_bigint()
+    }
+}
 impl FromStr for Felt {
     type Err = FromStrError;
 
@@ -452,6 +476,23 @@ impl FromStr for Felt {
         } else {
             Felt::from_dec_str(s)
         }
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl TryFrom<alloc::string::String> for Felt {
+    type Error = FromStrError;
+
+    fn try_from(value: alloc::string::String) -> Result<Self, Self::Error> {
+        Felt::from_str(&value)
+    }
+}
+
+impl TryFrom<&str> for Felt {
+    type Error = FromStrError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Felt::from_str(value)
     }
 }
 
@@ -473,22 +514,22 @@ impl Add<&Felt> for u64 {
             [0, 0, 0, low] => self.checked_add(low),
             // Now we need to compare the 3 most significant digits.
             // There are two relevant cases from now on, either `rhs` behaves like a
-            // substraction of a `u64` or the result of the sum falls out of range.
+            // subtraction of a `u64` or the result of the sum falls out of range.
 
             // The 3 MSB only match the prime for Felt::max_value(), which is -1
-            // in the signed field, so this is equivalent to substracting 1 to `self`.
+            // in the signed field, so this is equivalent to subtracting 1 to `self`.
             [hi @ .., _] if hi == PRIME_DIGITS_BE_HI => self.checked_sub(1),
 
             // For the remaining values between `[-u64::MAX..0]` (where `{0, -1}` have
             // already been covered) the MSB matches that of `PRIME - u64::MAX`.
             // Because we're in the negative number case, we count down. Because `0`
             // and `-1` correspond to different MSBs, `0` and `1` in the LSB are less
-            // than `-u64::MAX`, the smallest value we can add to (read, substract its
+            // than `-u64::MAX`, the smallest value we can add to (read, subtract its
             // magnitude from) a `u64` number, meaning we exclude them from the valid
             // case.
             // For the remaining range, we take the absolute value module-2 while
-            // correcting by substracting `1` (note we actually substract `2` because
-            // the absolute value itself requires substracting `1`.
+            // correcting by subtracting `1` (note we actually subtract `2` because
+            // the absolute value itself requires subtracting `1`.
             [hi @ .., low] if hi == PRIME_MINUS_U64_MAX_DIGITS_BE_HI && low >= 2 => {
                 (self).checked_sub(u64::MAX - (low - 2))
             }
@@ -746,7 +787,6 @@ mod arithmetic {
 }
 
 mod formatting {
-
     use core::fmt;
 
     use super::*;
@@ -754,29 +794,7 @@ mod formatting {
     /// Represents [Felt] in decimal by default.
     impl fmt::Display for Felt {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            if *self == Felt::ZERO {
-                return write!(f, "0");
-            }
-
-            let mut buf = [0u8; 4 * 20];
-            let mut i = buf.len() - 1;
-            let mut current = self.0.representative();
-            let ten = UnsignedInteger::from(10_u16);
-
-            loop {
-                let (quotient, remainder) = current.div_rem(&ten);
-                let digit = remainder.limbs[3] as u8;
-                buf[i] = digit + b'0';
-                current = quotient;
-                if current == UnsignedInteger::from(0_u16) {
-                    break;
-                }
-                i -= 1;
-            }
-
-            // sequence of `'0'..'9'` chars is guaranteed to be a valid UTF8 string
-            let s = core::str::from_utf8(&buf[i..]).unwrap();
-            fmt::Display::fmt(s, f)
+            write!(f, "{}", self.to_biguint())
         }
     }
 
@@ -796,7 +814,6 @@ mod test {
     use num_traits::Num;
     use proptest::prelude::*;
     use regex::Regex;
-    use size_of::TotalSize;
 
     #[test]
     fn test_debug_format() {
@@ -1170,14 +1187,14 @@ mod test {
     }
 
     #[test]
-    fn felt_from_hex_unchecked() {
-        assert_eq!(Felt::from_hex_unchecked("0"), Felt::from(0));
-        assert_eq!(Felt::from_hex_unchecked("1"), Felt::from(1));
-        assert_eq!(Felt::from_hex_unchecked("0x2"), Felt::from(2));
-        assert_eq!(Felt::from_hex_unchecked("0x0000000003"), Felt::from(3));
-        assert_eq!(Felt::from_hex_unchecked("000004"), Felt::from(4));
-        assert_eq!(Felt::from_hex_unchecked("0x05b"), Felt::from(91));
-        assert_eq!(Felt::from_hex_unchecked("A"), Felt::from(10));
+    fn felt_from_hex_unwrap() {
+        assert_eq!(Felt::from_hex_unwrap("0"), Felt::from(0));
+        assert_eq!(Felt::from_hex_unwrap("1"), Felt::from(1));
+        assert_eq!(Felt::from_hex_unwrap("0x2"), Felt::from(2));
+        assert_eq!(Felt::from_hex_unwrap("0x0000000003"), Felt::from(3));
+        assert_eq!(Felt::from_hex_unwrap("000004"), Felt::from(4));
+        assert_eq!(Felt::from_hex_unwrap("0x05b"), Felt::from(91));
+        assert_eq!(Felt::from_hex_unwrap("A"), Felt::from(10));
     }
     #[test]
     fn mul_operations() {
@@ -1360,13 +1377,15 @@ mod test {
     }
 
     #[test]
-    fn felt_size_of() {
-        assert_eq!(Felt::ZERO.size_of(), TotalSize::total(32));
-        assert_eq!(Felt::ONE.size_of(), TotalSize::total(32));
-        assert_eq!(
-            Felt(FieldElement::from(1600000000)).size_of(),
-            TotalSize::total(32)
+    fn felt_from_hex_upper_bound_limit() {
+        assert!(
+            Felt::from_hex("0x800000000000011000000000000000000000000000000000000000000000001")
+                .is_ok()
         );
-        assert_eq!(Felt::MAX.size_of(), TotalSize::total(32));
+        assert!(
+            Felt::from_hex("0x800000000000011000000000000000000000000000000000000000000000002")
+                .is_err()
+        );
+        assert!(Felt::from_hex(&format!("0x{}", "f".repeat(63))).is_err());
     }
 }

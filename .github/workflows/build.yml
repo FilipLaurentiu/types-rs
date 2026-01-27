@@ -17,7 +17,7 @@ jobs:
           - "starknet-types-core"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install toolchain
         run: rustup show
 
@@ -27,4 +27,4 @@ jobs:
 
       - name: "Build all feature combinations"
         run: |
-          cargo hack build --package ${{ matrix.package }} --feature-powerset
+          cargo hack build --package ${{ matrix.package }} --feature-powerset --no-dev-deps --depth 3
